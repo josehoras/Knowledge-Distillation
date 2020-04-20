@@ -101,9 +101,11 @@ output_dir = "small_linear_model_distill_rnd/"
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
-temperatures = [10]
-lrs = [1e-3]
-epochs = 50
+load=True
+
+temperatures = [4]
+lrs = [1e-5]
+epochs = 10
 sweep = "T"
 
 models = {}
@@ -116,15 +118,25 @@ for temp in temperatures:
         small_model = small_linear_net().to(device)
         # Create optimizer
         optimizer = Adam(small_model.parameters(), lr=lr)
-        optimizer.zero_grad()
         # Start training
         val_acc = []
         train_acc = []
         train_loss = [0]#[-np.log(1.0 / 10)]  # loss at iteration 0
-
-        # print(len(train_data), len(train_loader))
         it_per_epoch = len(train_loader)
         it = 0
+        # Maybe load previous model
+        if load == True:
+            checkpoint = torch.load(output_dir + "modelo_data")
+            small_model.load_state_dict(checkpoint['model_state_dict'])
+            checkpoint['optimizer_state_dict']['param_groups'][0]['lr'] = lr
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            print()
+            print(checkpoint['optimizer_state_dict']['param_groups'])
+            print(checkpoint.keys())
+            val_acc = checkpoint['val_acc']
+            train_acc = checkpoint['train_acc']
+            train_loss = checkpoint['loss_hist']
+            it = checkpoint['iterations']
 
         for epoch in range(epochs):
             for features, labels in tqdm(train_loader):
@@ -148,11 +160,12 @@ for temp in temperatures:
                 loss.backward()
                 optimizer.step()
                 train_loss.append(loss.item())
-                if it % 1000 == 0:
+                if it % 100 == 0:
                     train_acc.append(evaluate(small_model, train_loader, max_ex=100))
                     val_acc.append(evaluate(small_model, val_loader))
                     plot_loss(train_loss, it, it_per_epoch, base_name=output_dir + "loss_"+title, title=title)
                     plot_acc(train_acc, val_acc, it, it_per_epoch, base_name=output_dir + "acc_"+title, title=title)
+                    print('Iteration: %i, %.2f%%' % (it, val_acc[-1]))
                 it += 1
         #perform last book keeping
         train_acc.append(evaluate(small_model, train_loader, max_ex=100))
@@ -164,14 +177,16 @@ for temp in temperatures:
         models[title] = {'model': small_model,
                          'model_state_dict': small_model.state_dict(),
                          'optimizer_state_dict': optimizer.state_dict(),
-                         'loss_hist': train_loss,
                          'lr': lr,
                          'T': temp,
-                         'val_acc': val_acc[-1]}
+                         'loss_hist': train_loss,
+                         'train_acc': train_acc,
+                         'val_acc': val_acc,
+                         'iterations': it}
 
 
 
-val_accs = [models[key]['val_acc'] for key in models.keys()]
+val_accs = [models[key]['val_acc'][-1] for key in models.keys()]
 if sweep=="T":  xs = [models[key]['T'] for key in models.keys()]
 if sweep=="lr": xs = [models[key]['lr'] for key in models.keys()]
 keys = [key for key in models.keys()]
@@ -189,7 +204,7 @@ if sweep=="T": plt.xlabel('T')
 if sweep=="lr":
     plt.xlabel('Learning rate')
     plt.xscale('log')
-    plt.xlim([7e-2, 3e-3])
+    plt.xlim([xs[0]/2, xs[-1]*2])
 fig.savefig(output_dir + 'summary_{0}epochs.png'.format(epochs))
 
 best_key = keys[np.argmax(val_accs)]
@@ -197,11 +212,19 @@ print(best_key)
 best_model = models[best_key]['model']
 best_model.eval()
 
-torch.save({'epoch': epochs,
-            'model_state_dict': best_model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'loss_hist': train_loss},
-            output_dir + "modelo")
+torch.save(models[best_key],
+           output_dir + "modelo")
+
+# {'model': small_model,
+#                          'model_state_dict': small_model.state_dict(),
+#                          'optimizer_state_dict': optimizer.state_dict(),
+#                          'lr': lr,
+#                          'T': temp,
+#                          'loss_hist': train_loss,
+#                          'train_acc': train_acc,
+#                          'val_acc': val_acc,
+#                          'iterations': it}
+
 
 print("\nBig model")
 train_acc = evaluate(big_model, train_loader)

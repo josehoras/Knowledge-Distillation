@@ -35,7 +35,7 @@ def plot_acc(train_acc, val_acc, it, it_per_epoch, base_name='', title=''):
     plt.title(title)
     plt.ylabel('Accuracy')
     plt.xlabel('Iteration')
-    # plt.ylim([90, 100])
+    plt.ylim([90, 100])
     if base_name != '':
         fig.savefig(base_name + '.png')
         # pickle.dump([loss, smooth_loss, it], open(base_name + '-' + str(it) + '.p', 'wb'))

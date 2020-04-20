@@ -89,10 +89,9 @@ softmax_op = nn.Softmax(dim=1)
 mseloss_fn = nn.MSELoss()
 
 
-def my_loss(scores, targets, temperature = 5):
-    soft_pred = softmax_op(scores / temperature)
-    soft_targets = softmax_op(targets / temperature)
-
+def my_loss(scores, targets, T = 5):
+    soft_pred = softmax_op(scores / T)
+    soft_targets = softmax_op(targets / T)
     loss = mseloss_fn(soft_pred, soft_targets)
     return loss
 
@@ -102,8 +101,12 @@ output_dir = "small_linear_model_distill/"
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
-temperatures = [1, 2, 3, 4, 5]
-epochs = 14
+
+load=False
+
+temperatures = [1, 2, 3, 4, 5, 7.5, 10, 15, 20]
+epochs = 10
+lr = 1e-3
 
 models = {}
 for temp in temperatures:
@@ -112,34 +115,45 @@ for temp in temperatures:
     # create new student network
     small_model = small_linear_net().to(device)
     # Create optimizer
-    lr = 5e-3
+
     optimizer = Adam(small_model.parameters(), lr=lr)
-    optimizer.zero_grad()
     # Start training
     val_acc = []
     train_acc = []
     train_loss = [-np.log(1.0 / 10)]  # loss at iteration 0
-
     # print(len(train_data), len(train_loader))
     it_per_epoch = len(train_loader)
     it = 0
-
+    # Maybe load previous model
+    if load == True:
+        checkpoint = torch.load(output_dir + "modelo")
+        small_model.load_state_dict(checkpoint['model_state_dict'])
+        checkpoint['optimizer_state_dict']['param_groups'][0]['lr'] = 5e-4
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        print()
+        print(checkpoint['optimizer_state_dict']['param_groups'])
+        print(checkpoint.keys())
+        val_acc = checkpoint['val_acc']
+        train_acc = checkpoint['train_acc']
+        train_loss = checkpoint['loss_hist']
+        it = checkpoint['iterations']
     for epoch in range(epochs):
         for features, labels in tqdm(train_loader):
             scores = small_model(features)
             targets = big_model(features)
 
-            loss = my_loss(scores, targets, temperature = temp)
+            loss = my_loss(scores, targets, T = temp)
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             train_loss.append(loss.item())
-            if it % 100 == 0:
+            if it % 500 == 0:
                 train_acc.append(evaluate(small_model, train_loader, max_ex=100))
                 val_acc.append(evaluate(small_model, val_loader))
                 plot_loss(train_loss, it, it_per_epoch, base_name=output_dir + "loss_"+title, title=title)
                 plot_acc(train_acc, val_acc, it, it_per_epoch, base_name=output_dir + "acc_"+title, title=title)
+                print('Iteration: %i, %.2f%%' % (it, val_acc[-1]))
             it += 1
     #perform last book keeping
     train_acc.append(evaluate(small_model, train_loader, max_ex=100))
@@ -151,18 +165,19 @@ for temp in temperatures:
     models[title] = {'model': small_model,
                      'model_state_dict': small_model.state_dict(),
                      'optimizer_state_dict': optimizer.state_dict(),
-                     'loss_hist': train_loss,
                      'lr': lr,
                      'T': temp,
-                     'val_acc': val_acc[-1]}
-
+                     'loss_hist': train_loss,
+                     'train_acc': train_acc,
+                     'val_acc': val_acc,
+                     'iterations': it}
 
 
 for key in models.keys():
     print("for lr: %s, val_acc: %s" % (models[key]['lr'], models[key]['val_acc']))
     # print(key)
 
-val_accs = [models[key]['val_acc'] for key in models.keys()]
+val_accs = [models[key]['val_acc'][-1] for key in models.keys()]
 xs = [models[key]['T'] for key in models.keys()]
 keys = [key for key in models.keys()]
 
@@ -186,11 +201,8 @@ print(best_key)
 best_model = models[best_key]['model']
 best_model.eval()
 
-torch.save({'epoch': epochs,
-            'model_state_dict': best_model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'loss_hist': train_loss},
-            output_dir + "modelo")
+torch.save(models[best_key],
+           output_dir + "modelo")
 
 print("\nBig model")
 train_acc = evaluate(big_model, train_loader)
